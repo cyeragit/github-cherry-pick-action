@@ -1,16 +1,15 @@
 import * as core from '@actions/core'
 import * as io from '@actions/io'
-import * as exec from '@actions/exec'
+import {spawnSync} from 'child_process'
 import * as utils from './utils'
 import * as github from '@actions/github'
 import {Inputs, createPullRequest} from './github-helper'
-import { PullRequest } from '@octokit/webhooks-definitions/schema'
+import {PullRequest} from '@octokit/webhooks-definitions/schema'
 
 const CHERRYPICK_EMPTY =
   'The previous cherry-pick is now empty, possibly due to conflict resolution.'
 
-const CHERRYPICK_CONFLICT =
-  'CONFLICT (content): Merge conflict'
+const CHERRYPICK_CONFLICT = 'CONFLICT (content): Merge conflict'
 
 export async function run(): Promise<void> {
   try {
@@ -34,7 +33,8 @@ export async function run(): Promise<void> {
 
     // the value of merge_commit_sha changes depending on the status of the pull request
     // see https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#get-a-pull-request
-    const githubSha = (github.context.payload.pull_request as PullRequest).merge_commit_sha
+    const githubSha = (github.context.payload.pull_request as PullRequest)
+      .merge_commit_sha
     const prBranch = inputs.cherryPickBranch
       ? inputs.cherryPickBranch
       : `cherry-pick-${inputs.branch}-${githubSha}`
@@ -68,6 +68,7 @@ export async function run(): Promise<void> {
 
     // Cherry pick
     core.startGroup('Cherry picking')
+
     const result = await gitExecution([
       'cherry-pick',
       '-m',
@@ -77,15 +78,23 @@ export async function run(): Promise<void> {
     ])
 
     core.info(`Cherry pick finished with exit code ${result.exitCode}`)
+    core.info(`Cherry pick stdout: ${result.stdout}`)
+    core.info(`Cherry pick stderr: ${result.stderr}`)
 
-    if(result.exitCode !== 0 && (result.stderr.includes(CHERRYPICK_CONFLICT) || result.stdout.includes(CHERRYPICK_CONFLICT))) {
+    if (
+      result.exitCode !== 0 &&
+      (result.stderr.includes(CHERRYPICK_CONFLICT) ||
+        result.stdout.includes(CHERRYPICK_CONFLICT))
+    ) {
       await gitExecution(['add', '*'])
       await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
-    }
-
-    else if (result.exitCode !== 0 && !result.stderr.includes(CHERRYPICK_EMPTY)) {
+    } else if (
+      result.exitCode !== 0 &&
+      !result.stderr.includes(CHERRYPICK_EMPTY)
+    ) {
       throw new Error(`Unexpected error: ${result.stderr}`)
     }
+
     core.endGroup()
 
     // Push new branch
@@ -112,33 +121,14 @@ export async function run(): Promise<void> {
 }
 
 async function gitExecution(params: string[]): Promise<GitOutput> {
-  const result = new GitOutput()
-  const stdout: string[] = []
-  const stderr: string[] = []
-
-  const options = {
-    listeners: {
-      stdout: (data: Buffer) => {
-        stdout.push(data.toString())
-      },
-      stderr: (data: Buffer) => {
-        stderr.push(data.toString())
-      }
-    }
-  }
-
   const gitPath = await io.which('git', true)
-  result.exitCode = await exec.exec(gitPath, params, options)
-  result.stdout = stdout.join('')
-  result.stderr = stderr.join('')
+  const {stdout, stderr, status} = spawnSync(gitPath, params)
 
-  if (result.exitCode === 0) {
-    core.info(result.stdout.trim())
-  } else {
-    core.info(result.stderr.trim())
+  return {
+    stdout: stdout.toString(),
+    stderr: stderr.toString(),
+    exitCode: status ?? 0
   }
-
-  return result
 }
 
 class GitOutput {
