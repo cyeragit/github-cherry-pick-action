@@ -78,6 +78,8 @@ export async function run(): Promise<void> {
     ])
 
     core.info(`Cherry pick finished with exit code ${result.exitCode}`)
+    core.info(`Cherry pick stdout: ${result.stdout}`)
+    core.info(`Cherry pick stderr: ${result.stderr}`)
 
     if (
       result.exitCode !== 0 &&
