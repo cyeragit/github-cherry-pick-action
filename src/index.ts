@@ -71,6 +71,8 @@ export async function run(): Promise<void> {
 
     const result = await gitExecution([
       'cherry-pick',
+      '-X',
+      'no-renames',
       '-m',
       '1',
       '--strategy=recursive',
