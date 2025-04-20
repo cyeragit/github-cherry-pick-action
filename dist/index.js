@@ -10443,6 +10443,7 @@ function run() {
                     result.stdout.includes(CHERRYPICK_CONFLICT))) {
                 yield gitExecution(['add', '*']);
                 yield gitExecution(['commit', '-m', 'Cherry picking with conflicts']);
+                core.setOutput('does_pr_have_conflicts', 'true');
             }
             else if (result.exitCode !== 0 &&
                 !result.stderr.includes(CHERRYPICK_EMPTY)) {
