@@ -90,6 +90,7 @@ export async function run(): Promise<void> {
     ) {
       await gitExecution(['add', '*'])
       await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
+      core.setOutput('does_pr_have_conflicts', 'true')
     } else if (
       result.exitCode !== 0 &&
       !result.stderr.includes(CHERRYPICK_EMPTY)
