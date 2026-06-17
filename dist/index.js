@@ -10375,7 +10375,12 @@ const utils = __importStar(__nccwpck_require__(1314));
 const github = __importStar(__nccwpck_require__(5438));
 const github_helper_1 = __nccwpck_require__(5366);
 const CHERRYPICK_EMPTY = 'The previous cherry-pick is now empty, possibly due to conflict resolution.';
-const CHERRYPICK_CONFLICT = 'CONFLICT (content): Merge conflict';
+// Matches any git cherry-pick conflict marker, e.g.:
+//   CONFLICT (content): Merge conflict in ...
+//   CONFLICT (modify/delete): ... deleted in HEAD and modified in ...
+//   CONFLICT (rename/delete): ...
+//   CONFLICT (add/add): ...
+const CHERRYPICK_CONFLICT = /^CONFLICT \(/m;
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -10439,9 +10444,9 @@ function run() {
             core.info(`Cherry pick stdout: ${result.stdout}`);
             core.info(`Cherry pick stderr: ${result.stderr}`);
             if (result.exitCode !== 0 &&
-                (result.stderr.includes(CHERRYPICK_CONFLICT) ||
-                    result.stdout.includes(CHERRYPICK_CONFLICT))) {
-                yield gitExecution(['add', '*']);
+                (CHERRYPICK_CONFLICT.test(result.stderr) ||
+                    CHERRYPICK_CONFLICT.test(result.stdout))) {
+                yield gitExecution(['add', '-A']);
                 yield gitExecution(['commit', '-m', 'Cherry picking with conflicts']);
                 core.setOutput('does_pr_have_conflicts', 'true');
             }

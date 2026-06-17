@@ -9,7 +9,12 @@ import {PullRequest} from '@octokit/webhooks-definitions/schema'
 const CHERRYPICK_EMPTY =
   'The previous cherry-pick is now empty, possibly due to conflict resolution.'
 
-const CHERRYPICK_CONFLICT = 'CONFLICT (content): Merge conflict'
+// Matches any git cherry-pick conflict marker, e.g.:
+//   CONFLICT (content): Merge conflict in ...
+//   CONFLICT (modify/delete): ... deleted in HEAD and modified in ...
+//   CONFLICT (rename/delete): ...
+//   CONFLICT (add/add): ...
+const CHERRYPICK_CONFLICT = /^CONFLICT \(/m
 
 export async function run(): Promise<void> {
   try {
@@ -85,10 +90,10 @@ export async function run(): Promise<void> {
 
     if (
       result.exitCode !== 0 &&
-      (result.stderr.includes(CHERRYPICK_CONFLICT) ||
-        result.stdout.includes(CHERRYPICK_CONFLICT))
+      (CHERRYPICK_CONFLICT.test(result.stderr) ||
+        CHERRYPICK_CONFLICT.test(result.stdout))
     ) {
-      await gitExecution(['add', '*'])
+      await gitExecution(['add', '-A'])
       await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
       core.setOutput('does_pr_have_conflicts', 'true')
     } else if (
