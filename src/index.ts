@@ -16,6 +16,22 @@ const CHERRYPICK_EMPTY =
 //   CONFLICT (add/add): ...
 const CHERRYPICK_CONFLICT = /^CONFLICT \(/m
 
+// Lockfiles are fully-generated files: their whole-file churn produces textual
+// cherry-pick conflicts on unrelated dependency lines whenever the source commit
+// lags the target branch, even when the real change is conflict-free. When the
+// ONLY conflicted files are lockfiles AND the picked commit changed no package.json
+// (so no dependency actually moved), the target branch's lockfile is authoritative
+// and we can resolve by keeping it (`--ours`) instead of surfacing a conflict.
+const LOCKFILE_BASENAMES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock']
+
+const basename = (p: string): string => p.split('/').pop() ?? p
+
+const splitLines = (s: string): string[] =>
+  s
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+
 export async function run(): Promise<void> {
   try {
     const inputs: Inputs = {
@@ -93,9 +109,16 @@ export async function run(): Promise<void> {
       (CHERRYPICK_CONFLICT.test(result.stderr) ||
         CHERRYPICK_CONFLICT.test(result.stdout))
     ) {
-      await gitExecution(['add', '-A'])
-      await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
-      core.setOutput('does_pr_have_conflicts', 'true')
+      const lockfileResolved = await tryResolveLockfileOnlyConflicts(githubSha)
+      if (lockfileResolved) {
+        core.info(
+          'Resolved lockfile-only conflicts by keeping the target branch lockfile; no manual resolution needed.'
+        )
+      } else {
+        await gitExecution(['add', '-A'])
+        await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
+        core.setOutput('does_pr_have_conflicts', 'true')
+      }
     } else if (
       result.exitCode !== 0 &&
       !result.stderr.includes(CHERRYPICK_EMPTY)
@@ -126,6 +149,73 @@ export async function run(): Promise<void> {
       core.setFailed(err)
     }
   }
+}
+
+// Attempt to resolve a conflicted cherry-pick when the conflicts are confined to
+// generated lockfiles. Safe only when the picked commit changed no package.json:
+// in that case no dependency actually moved, the target branch's lockfile is the
+// source of truth, and keeping it (`--ours`) yields a lockfile consistent with the
+// merged package.json set. Any non-lockfile conflict, or a package.json change,
+// bails out to the normal "commit with conflicts" path for a human to resolve.
+// Returns true iff the cherry-pick was fully resolved and committed here.
+async function tryResolveLockfileOnlyConflicts(
+  pickedSha: string | null
+): Promise<boolean> {
+  if (!pickedSha) {
+    return false
+  }
+  const unmerged = splitLines(
+    (await gitExecution(['diff', '--name-only', '--diff-filter=U'])).stdout
+  )
+  if (unmerged.length === 0) {
+    return false
+  }
+  if (!unmerged.every(file => LOCKFILE_BASENAMES.includes(basename(file)))) {
+    return false
+  }
+
+  // Files the picked commit itself changed (its first-parent diff, matching the
+  // `-m 1` mainline used for the cherry-pick). A package.json change means deps
+  // moved and the lockfile must be regenerated, which this git-only path cannot do.
+  const changedByPick = splitLines(
+    (await gitExecution(['diff', '--name-only', `${pickedSha}^1`, pickedSha]))
+      .stdout
+  )
+  if (changedByPick.some(file => basename(file) === 'package.json')) {
+    return false
+  }
+
+  // Keep the target branch copy of each conflicted lockfile.
+  for (const file of unmerged) {
+    const checkout = await gitExecution(['checkout', '--ours', '--', file])
+    if (checkout.exitCode !== 0) {
+      return false
+    }
+    const add = await gitExecution(['add', '--', file])
+    if (add.exitCode !== 0) {
+      return false
+    }
+  }
+
+  // If discarding the lockfile delta leaves the index identical to HEAD, the pick
+  // only touched lockfiles and is now empty — skip it instead of committing an empty
+  // change (mirrors git's own "cherry-pick is now empty" handling).
+  const hasStagedChanges =
+    (await gitExecution(['diff', '--cached', '--quiet', 'HEAD'])).exitCode !== 0
+  if (!hasStagedChanges) {
+    const skip = await gitExecution(['cherry-pick', '--skip'])
+    return skip.exitCode === 0
+  }
+
+  // Finalize the cherry-pick, reusing the original commit message. `core.editor=true`
+  // makes `--continue` accept the prepared message non-interactively.
+  const cont = await gitExecution([
+    '-c',
+    'core.editor=true',
+    'cherry-pick',
+    '--continue'
+  ])
+  return cont.exitCode === 0
 }
 
 async function gitExecution(params: string[]): Promise<GitOutput> {

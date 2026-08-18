@@ -10381,6 +10381,18 @@ const CHERRYPICK_EMPTY = 'The previous cherry-pick is now empty, possibly due to
 //   CONFLICT (rename/delete): ...
 //   CONFLICT (add/add): ...
 const CHERRYPICK_CONFLICT = /^CONFLICT \(/m;
+// Lockfiles are fully-generated files: their whole-file churn produces textual
+// cherry-pick conflicts on unrelated dependency lines whenever the source commit
+// lags the target branch, even when the real change is conflict-free. When the
+// ONLY conflicted files are lockfiles AND the picked commit changed no package.json
+// (so no dependency actually moved), the target branch's lockfile is authoritative
+// and we can resolve by keeping it (`--ours`) instead of surfacing a conflict.
+const LOCKFILE_BASENAMES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock'];
+const basename = (p) => { var _a; return (_a = p.split('/').pop()) !== null && _a !== void 0 ? _a : p; };
+const splitLines = (s) => s
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -10446,9 +10458,15 @@ function run() {
             if (result.exitCode !== 0 &&
                 (CHERRYPICK_CONFLICT.test(result.stderr) ||
                     CHERRYPICK_CONFLICT.test(result.stdout))) {
-                yield gitExecution(['add', '-A']);
-                yield gitExecution(['commit', '-m', 'Cherry picking with conflicts']);
-                core.setOutput('does_pr_have_conflicts', 'true');
+                const lockfileResolved = yield tryResolveLockfileOnlyConflicts(githubSha);
+                if (lockfileResolved) {
+                    core.info('Resolved lockfile-only conflicts by keeping the target branch lockfile; no manual resolution needed.');
+                }
+                else {
+                    yield gitExecution(['add', '-A']);
+                    yield gitExecution(['commit', '-m', 'Cherry picking with conflicts']);
+                    core.setOutput('does_pr_have_conflicts', 'true');
+                }
             }
             else if (result.exitCode !== 0 &&
                 !result.stderr.includes(CHERRYPICK_EMPTY)) {
@@ -10480,6 +10498,63 @@ function run() {
     });
 }
 exports.run = run;
+// Attempt to resolve a conflicted cherry-pick when the conflicts are confined to
+// generated lockfiles. Safe only when the picked commit changed no package.json:
+// in that case no dependency actually moved, the target branch's lockfile is the
+// source of truth, and keeping it (`--ours`) yields a lockfile consistent with the
+// merged package.json set. Any non-lockfile conflict, or a package.json change,
+// bails out to the normal "commit with conflicts" path for a human to resolve.
+// Returns true iff the cherry-pick was fully resolved and committed here.
+function tryResolveLockfileOnlyConflicts(pickedSha) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!pickedSha) {
+            return false;
+        }
+        const unmerged = splitLines((yield gitExecution(['diff', '--name-only', '--diff-filter=U'])).stdout);
+        if (unmerged.length === 0) {
+            return false;
+        }
+        if (!unmerged.every(file => LOCKFILE_BASENAMES.includes(basename(file)))) {
+            return false;
+        }
+        // Files the picked commit itself changed (its first-parent diff, matching the
+        // `-m 1` mainline used for the cherry-pick). A package.json change means deps
+        // moved and the lockfile must be regenerated, which this git-only path cannot do.
+        const changedByPick = splitLines((yield gitExecution(['diff', '--name-only', `${pickedSha}^1`, pickedSha]))
+            .stdout);
+        if (changedByPick.some(file => basename(file) === 'package.json')) {
+            return false;
+        }
+        // Keep the target branch copy of each conflicted lockfile.
+        for (const file of unmerged) {
+            const checkout = yield gitExecution(['checkout', '--ours', '--', file]);
+            if (checkout.exitCode !== 0) {
+                return false;
+            }
+            const add = yield gitExecution(['add', '--', file]);
+            if (add.exitCode !== 0) {
+                return false;
+            }
+        }
+        // If discarding the lockfile delta leaves the index identical to HEAD, the pick
+        // only touched lockfiles and is now empty — skip it instead of committing an empty
+        // change (mirrors git's own "cherry-pick is now empty" handling).
+        const hasStagedChanges = (yield gitExecution(['diff', '--cached', '--quiet', 'HEAD'])).exitCode !== 0;
+        if (!hasStagedChanges) {
+            const skip = yield gitExecution(['cherry-pick', '--skip']);
+            return skip.exitCode === 0;
+        }
+        // Finalize the cherry-pick, reusing the original commit message. `core.editor=true`
+        // makes `--continue` accept the prepared message non-interactively.
+        const cont = yield gitExecution([
+            '-c',
+            'core.editor=true',
+            'cherry-pick',
+            '--continue'
+        ]);
+        return cont.exitCode === 0;
+    });
+}
 function gitExecution(params) {
     return __awaiter(this, void 0, void 0, function* () {
         const gitPath = yield io.which('git', true);
