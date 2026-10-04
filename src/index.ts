@@ -96,11 +96,16 @@ export async function run(): Promise<void> {
       await gitExecution(['add', '-A'])
       await gitExecution(['commit', '-m', 'Cherry picking with conflicts'])
       core.setOutput('does_pr_have_conflicts', 'true')
-    } else if (
-      result.exitCode !== 0 &&
-      !result.stderr.includes(CHERRYPICK_EMPTY)
-    ) {
-      throw new Error(`Unexpected error: ${result.stderr}`)
+    } else if (result.exitCode !== 0) {
+      if (!result.stderr.includes(CHERRYPICK_EMPTY)) {
+        throw new Error(`Unexpected error: ${result.stderr}`)
+      }
+      await gitExecution(['cherry-pick', '--skip'])
+      core.info(
+        `Nothing to cherry-pick: ${githubSha} is already on ${inputs.branch}. No PR opened.`
+      )
+      core.endGroup()
+      return
     }
 
     core.endGroup()

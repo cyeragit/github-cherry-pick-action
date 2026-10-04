@@ -219,6 +219,25 @@ describe('run main', () => {
     expect(outputs().does_pr_have_conflicts).toEqual('true')
   })
 
+  test('an empty pick means the change is already on the target: skip, no push, no PR', async () => {
+    gitReplies['cherry-pick'] = {
+      status: 1,
+      stderr:
+        'The previous cherry-pick is now empty, possibly due to conflict resolution.\n'
+    }
+
+    await run()
+
+    expect(gitCallsFor('cherry-pick').map(args => args[1])).toEqual([
+      '-X',
+      '--skip'
+    ])
+    expect(gitCallsFor('push')).toEqual([])
+    expect(createPullRequest).not.toBeCalled()
+    expect(outputs().number).toBeUndefined()
+    expect(core.setFailed).not.toBeCalled()
+  })
+
   test('any other cherry-pick error fails the action', async () => {
     gitReplies['cherry-pick'] = {
       status: 128,
