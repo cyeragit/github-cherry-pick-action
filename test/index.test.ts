@@ -41,14 +41,18 @@ jest.mock('@actions/io', () => {
 // The action shells out through spawnSync. Each test scripts git's answers by subcommand; anything
 // not scripted succeeds silently, which is what config/fetch/checkout/push do in the real thing.
 type GitReply = {status?: number; stdout?: string; stderr?: string}
-let gitReplies: {[subcommand: string]: GitReply} = {}
+let gitReplies: {
+  [subcommand: string]: GitReply | ((args: string[]) => GitReply)
+} = {}
 const gitCalls: string[][] = []
 
 jest.mock('child_process', () => {
   return {
     spawnSync: jest.fn().mockImplementation((_bin: string, args: string[]) => {
       gitCalls.push(args)
-      const reply: GitReply = gitReplies[args[0]] ?? {}
+      const scripted = gitReplies[args[0]]
+      const reply: GitReply =
+        typeof scripted === 'function' ? scripted(args) : scripted ?? {}
       return {
         status: reply.status ?? 0,
         stdout: Buffer.from(reply.stdout ?? ''),
@@ -235,6 +239,25 @@ describe('run main', () => {
     expect(gitCallsFor('push')).toEqual([])
     expect(createPullRequest).not.toBeCalled()
     expect(outputs().number).toBeUndefined()
+    expect(core.setFailed).not.toBeCalled()
+  })
+
+  test('a failed --skip after an empty pick is logged, not fatal', async () => {
+    gitReplies['cherry-pick'] = (args: string[]) =>
+      args[1] === '--skip'
+        ? {status: 128, stderr: 'fatal: no cherry-pick in progress\n'}
+        : {
+            status: 1,
+            stderr:
+              'The previous cherry-pick is now empty, possibly due to conflict resolution.\n'
+          }
+
+    await run()
+
+    expect(core.warning).toHaveBeenCalledWith(
+      'cherry-pick --skip exited 128: fatal: no cherry-pick in progress\n'
+    )
+    expect(createPullRequest).not.toBeCalled()
     expect(core.setFailed).not.toBeCalled()
   })
 

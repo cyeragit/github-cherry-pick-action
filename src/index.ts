@@ -100,7 +100,12 @@ export async function run(): Promise<void> {
       if (!result.stderr.includes(CHERRYPICK_EMPTY)) {
         throw new Error(`Unexpected error: ${result.stderr}`)
       }
-      await gitExecution(['cherry-pick', '--skip'])
+      const skip = await gitExecution(['cherry-pick', '--skip'])
+      if (skip.exitCode !== 0) {
+        core.warning(
+          `cherry-pick --skip exited ${skip.exitCode}: ${skip.stderr}`
+        )
+      }
       core.info(
         `Nothing to cherry-pick: ${githubSha} is already on ${inputs.branch}. No PR opened.`
       )

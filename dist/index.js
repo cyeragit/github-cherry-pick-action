@@ -10454,7 +10454,10 @@ function run() {
                 if (!result.stderr.includes(CHERRYPICK_EMPTY)) {
                     throw new Error(`Unexpected error: ${result.stderr}`);
                 }
-                yield gitExecution(['cherry-pick', '--skip']);
+                const skip = yield gitExecution(['cherry-pick', '--skip']);
+                if (skip.exitCode !== 0) {
+                    core.warning(`cherry-pick --skip exited ${skip.exitCode}: ${skip.stderr}`);
+                }
                 core.info(`Nothing to cherry-pick: ${githubSha} is already on ${inputs.branch}. No PR opened.`);
                 core.endGroup();
                 return;
