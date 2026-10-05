@@ -10450,9 +10450,17 @@ function run() {
                 yield gitExecution(['commit', '-m', 'Cherry picking with conflicts']);
                 core.setOutput('does_pr_have_conflicts', 'true');
             }
-            else if (result.exitCode !== 0 &&
-                !result.stderr.includes(CHERRYPICK_EMPTY)) {
-                throw new Error(`Unexpected error: ${result.stderr}`);
+            else if (result.exitCode !== 0) {
+                if (!result.stderr.includes(CHERRYPICK_EMPTY)) {
+                    throw new Error(`Unexpected error: ${result.stderr}`);
+                }
+                const skip = yield gitExecution(['cherry-pick', '--skip']);
+                if (skip.exitCode !== 0) {
+                    core.warning(`cherry-pick --skip exited ${skip.exitCode}: ${skip.stderr}`);
+                }
+                core.info(`Nothing to cherry-pick: ${githubSha} is already on ${inputs.branch}. No PR opened.`);
+                core.endGroup();
+                return;
             }
             core.endGroup();
             // Push new branch
