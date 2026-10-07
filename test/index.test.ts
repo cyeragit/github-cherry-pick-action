@@ -62,6 +62,16 @@ jest.mock('child_process', () => {
   }
 })
 
+const pullsGet = jest.fn().mockResolvedValue({
+  data: {
+    number: 77,
+    merge_commit_sha: 'YYYYYY',
+    title: 'fetched title',
+    body: '',
+    labels: []
+  }
+})
+
 jest.mock('@actions/github', () => {
   return {
     context: {
@@ -70,12 +80,16 @@ jest.mock('@actions/github', () => {
           merge_commit_sha: 'XXXXXX'
         } as PullRequest
       }
-    }
+    },
+    getOctokit: jest
+      .fn()
+      .mockImplementation(() => ({rest: {pulls: {get: pullsGet}}}))
   }
 })
 
 jest.mock('../src/github-helper', () => {
   return {
+    ...jest.requireActual('../src/github-helper'),
     createPullRequest: jest.fn().mockImplementation(() => {
       return mockedCreatePullRequestOutputData
     })
@@ -145,7 +159,8 @@ describe('run main', () => {
         reviewers: [],
         cherryPickBranch: ''
       }),
-      'cherry-pick-target-branch-XXXXXX'
+      'cherry-pick-target-branch-XXXXXX',
+      expect.anything()
     )
   })
 
@@ -158,7 +173,8 @@ describe('run main', () => {
 
     expect(createPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({cherryPickBranch: 'my-custom-branch'}),
-      'my-custom-branch'
+      'my-custom-branch',
+      expect.anything()
     )
   })
 
@@ -181,7 +197,35 @@ describe('run main', () => {
         reviewers: ['user1', 'user2', 'user3'],
         cherryPickBranch: 'my-custom-branch'
       }),
-      'my-custom-branch'
+      'my-custom-branch',
+      expect.anything()
+    )
+  })
+
+  test('pull-request-number fetches the PR instead of reading the event payload', async () => {
+    mockedGetInputData['pull-request-number'] = '77'
+    process.env.GITHUB_REPOSITORY = 'acme/repo'
+
+    await run()
+
+    expect(pullsGet).toHaveBeenCalledWith({
+      owner: 'acme',
+      repo: 'repo',
+      pull_number: 77
+    })
+    expect(gitCallsFor('cherry-pick')[0]).toContain('YYYYYY')
+    expect(gitCallsFor('checkout')).toEqual([
+      [
+        'checkout',
+        '-b',
+        'cherry-pick-target-branch-YYYYYY',
+        'origin/target-branch'
+      ]
+    ])
+    expect(createPullRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      'cherry-pick-target-branch-YYYYYY',
+      expect.objectContaining({number: 77, title: 'fetched title'})
     )
   })
 

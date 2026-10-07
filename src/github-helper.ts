@@ -21,16 +21,29 @@ export interface Inputs {
   force?: boolean
 }
 
+export async function loadPullRequest(
+  token: string,
+  number: string
+): Promise<PullRequest> {
+  if (!number) {
+    return github.context.payload.pull_request as PullRequest
+  }
+  const octokit = github.getOctokit(token)
+  const [owner, repo] = (process.env.GITHUB_REPOSITORY || '').split('/')
+  const {data} = await octokit.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: Number(number)
+  })
+  return data as unknown as PullRequest
+}
+
 export async function createPullRequest(
   inputs: Inputs,
-  prBranch: string
+  prBranch: string,
+  pull_request: PullRequest
 ): Promise<any> {
   const octokit = github.getOctokit(inputs.token)
-  if (!github.context.payload) {
-    core.info(`Error: no payload in github.context`)
-    return
-  }
-  const pull_request = github.context.payload.pull_request as PullRequest
   if (process.env.GITHUB_REPOSITORY !== undefined) {
     const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/')
 

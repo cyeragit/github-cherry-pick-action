@@ -2,9 +2,7 @@ import * as core from '@actions/core'
 import * as io from '@actions/io'
 import {spawnSync} from 'child_process'
 import * as utils from './utils'
-import * as github from '@actions/github'
-import {Inputs, createPullRequest} from './github-helper'
-import {PullRequest} from '@octokit/webhooks-definitions/schema'
+import {Inputs, createPullRequest, loadPullRequest} from './github-helper'
 
 const CHERRYPICK_EMPTY =
   'The previous cherry-pick is now empty, possibly due to conflict resolution.'
@@ -38,8 +36,11 @@ export async function run(): Promise<void> {
 
     // the value of merge_commit_sha changes depending on the status of the pull request
     // see https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#get-a-pull-request
-    const githubSha = (github.context.payload.pull_request as PullRequest)
-      .merge_commit_sha
+    const pullRequest = await loadPullRequest(
+      inputs.token,
+      core.getInput('pull-request-number')
+    )
+    const githubSha = pullRequest.merge_commit_sha
     const prBranch = inputs.cherryPickBranch
       ? inputs.cherryPickBranch
       : `cherry-pick-${inputs.branch}-${githubSha}`
@@ -126,7 +127,7 @@ export async function run(): Promise<void> {
 
     // Create pull request
     core.startGroup('Opening pull request')
-    const pull = await createPullRequest(inputs, prBranch)
+    const pull = await createPullRequest(inputs, prBranch, pullRequest)
     core.setOutput('data', JSON.stringify(pull.data))
     core.setOutput('number', pull.data.number)
     core.setOutput('html_url', pull.data.html_url)
