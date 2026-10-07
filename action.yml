@@ -50,6 +50,11 @@ inputs:
     required: false
   cherry-pick-branch:
     description: "Name of the new cherry pick branch."
+  pull-request-number:
+    description: >
+      The merged pull request to cherry-pick. Defaults to the pull request of the triggering event;
+      set it to run from a `workflow_dispatch`, where there is no pull request in the event payload.
+    required: false
   force:
     description: "Forcefully push the branch to remote branch"
     required: false
