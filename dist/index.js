@@ -10211,18 +10211,29 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createPullRequest = void 0;
+exports.createPullRequest = exports.loadPullRequest = void 0;
 const github = __importStar(__nccwpck_require__(5438));
 const core = __importStar(__nccwpck_require__(2186));
 const ERROR_PR_REVIEW_FROM_AUTHOR = 'Review cannot be requested from pull request author';
-function createPullRequest(inputs, prBranch) {
+function loadPullRequest(token, number) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!number) {
+            return github.context.payload.pull_request;
+        }
+        const octokit = github.getOctokit(token);
+        const [owner, repo] = (process.env.GITHUB_REPOSITORY || '').split('/');
+        const { data } = yield octokit.rest.pulls.get({
+            owner,
+            repo,
+            pull_number: Number(number)
+        });
+        return data;
+    });
+}
+exports.loadPullRequest = loadPullRequest;
+function createPullRequest(inputs, prBranch, pull_request) {
     return __awaiter(this, void 0, void 0, function* () {
         const octokit = github.getOctokit(inputs.token);
-        if (!github.context.payload) {
-            core.info(`Error: no payload in github.context`);
-            return;
-        }
-        const pull_request = github.context.payload.pull_request;
         if (process.env.GITHUB_REPOSITORY !== undefined) {
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             // Get PR title
@@ -10372,7 +10383,6 @@ const core = __importStar(__nccwpck_require__(2186));
 const io = __importStar(__nccwpck_require__(7436));
 const child_process_1 = __nccwpck_require__(2081);
 const utils = __importStar(__nccwpck_require__(1314));
-const github = __importStar(__nccwpck_require__(5438));
 const github_helper_1 = __nccwpck_require__(5366);
 const CHERRYPICK_EMPTY = 'The previous cherry-pick is now empty, possibly due to conflict resolution.';
 // Matches any git cherry-pick conflict marker, e.g.:
@@ -10402,8 +10412,8 @@ function run() {
             core.info(`Cherry pick into branch ${inputs.branch}!`);
             // the value of merge_commit_sha changes depending on the status of the pull request
             // see https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#get-a-pull-request
-            const githubSha = github.context.payload.pull_request
-                .merge_commit_sha;
+            const pullRequest = yield (0, github_helper_1.loadPullRequest)(inputs.token, core.getInput('pull-request-number'));
+            const githubSha = pullRequest.merge_commit_sha;
             const prBranch = inputs.cherryPickBranch
                 ? inputs.cherryPickBranch
                 : `cherry-pick-${inputs.branch}-${githubSha}`;
@@ -10474,7 +10484,7 @@ function run() {
             core.endGroup();
             // Create pull request
             core.startGroup('Opening pull request');
-            const pull = yield (0, github_helper_1.createPullRequest)(inputs, prBranch);
+            const pull = yield (0, github_helper_1.createPullRequest)(inputs, prBranch, pullRequest);
             core.setOutput('data', JSON.stringify(pull.data));
             core.setOutput('number', pull.data.number);
             core.setOutput('html_url', pull.data.html_url);
